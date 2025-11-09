@@ -4,7 +4,7 @@
     # Server Hardware and Disk Health Monitoring Script
     # Compatible with most Linux distributions and terminal types
 
-    VERSION="v1.1"
+    VERSION="v1.1.1"
 
     # Parse command line arguments
     EXTENDED_MODE=0
@@ -144,75 +144,80 @@
         END_WARNINGS=""
         END_NOTICES=""
 
-        # Function to print section headers (YABS-style)
         print_header() {
             echo ""
             echo "$1:"
             echo "---------------------------------"
         }
 
-    # Function to print key-value pairs (YABS-style)
     print_info() {
         printf "%-14s : %s\n" "$1" "$2"
     }
 
-    # Function to detect disk type (HDD vs SSD) with multiple fallback methods
     detect_disk_type() {
         local disk="$1"
         local disk_type=""
         
-        # Method 1: Check /sys/block/*/queue/rotational (most reliable)
+        if [[ "$disk" == nvme* ]]; then
+            echo "NVMe"
+            return
+        fi
+        
         if [ -f "/sys/block/$disk/queue/rotational" ]; then
             disk_type=$(cat "/sys/block/$disk/queue/rotational" 2>/dev/null)
             if [ "$disk_type" = "1" ]; then
                 echo "HDD"
                 return
             elif [ "$disk_type" = "0" ]; then
+                if [ "$has_lsblk" -eq 1 ]; then
+                    local model=$(lsblk -dno MODEL /dev/$disk 2>/dev/null | tr '[:upper:]' '[:lower:]')
+                    if [ -n "$model" ] && echo "$model" | grep -qE "nvme"; then
+                        echo "NVMe"
+                        return
+                    fi
+                fi
                 echo "SSD"
                 return
             fi
         fi
         
-        # Method 2: Use lsblk ROTA field
         if [ "$has_lsblk" -eq 1 ]; then
             disk_type=$(lsblk -dno ROTA /dev/$disk 2>/dev/null)
             if [ "$disk_type" = "1" ]; then
                 echo "HDD"
                 return
             elif [ "$disk_type" = "0" ]; then
+                local model=$(lsblk -dno MODEL /dev/$disk 2>/dev/null | tr '[:upper:]' '[:lower:]')
+                if [ -n "$model" ] && echo "$model" | grep -qE "nvme"; then
+                    echo "NVMe"
+                    return
+                fi
                 echo "SSD"
                 return
             fi
         fi
         
-        # Method 3: Check device name pattern (nvme* are always SSD)
-        if [[ "$disk" == nvme* ]]; then
-            echo "SSD"
-            return
-        fi
-        
-        # Method 4: Check model name for hints (if available)
         if [ "$has_lsblk" -eq 1 ]; then
             local model=$(lsblk -dno MODEL /dev/$disk 2>/dev/null | tr '[:upper:]' '[:lower:]')
             if [ -n "$model" ]; then
-                # Common HDD indicators
                 if echo "$model" | grep -qE "hdd|hard disk|rotating|spinning|rpm|wd|seagate|toshiba|hitachi"; then
                     echo "HDD"
                     return
                 fi
-                # Common SSD indicators
-                if echo "$model" | grep -qE "ssd|solid state|nvme|flash"; then
+                if echo "$model" | grep -qE "nvme"; then
+                    echo "NVMe"
+                    return
+                fi
+                if echo "$model" | grep -qE "ssd|solid state|flash"; then
                     echo "SSD"
                     return
                 fi
             fi
         fi
         
-        # Default: assume SSD/NVMe if we can't determine (safer assumption for modern systems)
         echo "SSD"
     }
 
-    # Print YABS-style banner
     echo ""
     if [ "$IS_WSL" -eq 1 ]; then
         echo "${YELLOW}⚠  WSL (Windows Subsystem for Linux) detected${RESET}"
@@ -222,14 +227,12 @@
     echo "# ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## #"
     echo "#                                                     #"
     
-    # Calculate centering for title
     title="Yet-Another-Hardware-Info"
-    box_width=53  # Width between the # marks
+    box_width=53
     title_len=${#title}
     pad=$(( (box_width - title_len) / 2 ))
     printf "#%*s%s%*s#\n" $pad "" "$title" $((box_width - title_len - pad)) ""
     
-    # Calculate centering for version
     version_len=${#VERSION}
     pad=$(( (box_width - version_len) / 2 ))
     printf "#%*s%s%*s#\n" $pad "" "$VERSION" $((box_width - version_len - pad)) ""
@@ -263,7 +266,6 @@
                 fi
                 print_info "Uptime" "$uptime_str"
             else
-                # Last resort fallback
                 print_info "Uptime" "$(uptime | sed 's/.*up \([^,]*\),.*/\1/' 2>/dev/null || echo 'Unknown')"
             fi
         fi
@@ -496,22 +498,17 @@
                 echo ""
                 echo "${BOLD}${GREEN}▸  /dev/$disk${RESET}"
                 
-                # Get full SMART data (with NVMe support)
                 full_smart=""
                 nvme_device=0
                 if [[ "$disk" == nvme* ]] && command -v nvme >/dev/null 2>&1; then
-                    # Use nvme-cli for NVMe drives
                     nvme_device=1
                     full_smart=$(LC_ALL=C nvme smart-log /dev/"$disk" 2>/dev/null)
                 else
-                    # Fallback to smartctl for SATA/SAS drives
                     full_smart=$(LC_ALL=C $SMARTCTL_BIN -a /dev/$disk 2>&1)
                 fi
                 
-                # Check if we got permission denied
                 if echo "$full_smart" | grep -q "Permission denied\|You must be root\|Operation not permitted"; then
                     permission_issue=1
-                    # Try to get basic info from lsblk at least
                     disk_model=$(lsblk -dno MODEL /dev/$disk 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                     disk_size=$(lsblk -dno SIZE /dev/$disk 2>/dev/null)
                     info_line=""
@@ -560,16 +557,12 @@
                     [ -n "$serial_line" ] && print_info "Serial/FW" "$serial_line"
                 fi
                 
-                # Power-On Hours and Temperature combined
                 if [ "$nvme_device" -eq 1 ]; then
-                    # NVMe parsing
                     poh=$(echo "$full_smart" | awk -F': ' '/^power_on_hours/{gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/,/, "", $2); print $2}')
                     temp=$(echo "$full_smart" | awk -F': ' '/^temperature/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' | sed 's/[^0-9].*//')
                 else
-                    # SATA/SAS parsing
                     poh=$(echo "$full_smart" | awk '/Power_On_Hours|Power On Hours/{print $NF; exit}' | sed 's/,//g')
                     temp=$(echo "$full_smart" | awk '/Temperature_Celsius/{print $10; exit} /Temperature:/{print $2; exit}')
-                    # Extract only numeric value from temperature (handle cases like "Drive" or "N/A")
                     temp=$(echo "$temp" | sed 's/[^0-9]//g')
                 fi
                 
@@ -584,7 +577,6 @@
                     fi
                 fi
                 
-                # Only process temperature if it's a valid number
                 if [ -n "$temp" ] && [[ "$temp" =~ ^[0-9]+$ ]]; then
                     temp_str=""
                     if [ "$temp" -gt 60 ]; then
@@ -851,12 +843,7 @@
                         fi
                     fi
                     
-                    # If still not found, use lsblk tree to find any mounted device using this disk
-                    # This handles RAID, LVM, partitions, etc. by checking all children recursively
                     if [ -z "$mount_point" ]; then
-                        # Get all devices that are children of this disk (including RAID, LVM, partitions)
-                        # lsblk -nro NAME,MOUNTPOINT shows the tree with mount points
-                        # Find the first device with a non-empty mount point
                         mount_point=$(lsblk -nro NAME,MOUNTPOINT /dev/$disk 2>/dev/null | awk -v disk="$disk" '
                             BEGIN { found_disk=0 }
                             $1 == disk { found_disk=1; next }
@@ -868,9 +855,7 @@
                             }
                         ' | head -1)
                         
-                        # Alternative: check all mounted filesystems and find which device uses this disk
                         if [ -z "$mount_point" ]; then
-                            # Get all children of this disk recursively
                             all_children=$(lsblk -nro NAME /dev/$disk 2>/dev/null | grep -v "^${disk}$")
                             
                             # Check each mounted filesystem
@@ -916,7 +901,6 @@
                             if [ "$speed_unit" = "GB/s" ]; then
                                 echo "${GREEN}${speed}${RESET}"
                             elif [ "$type_label" = "HDD" ]; then
-                                # HDD expectations: >100 MB/s is good
                                 if [ "$(awk "BEGIN{print ($speed_value > 100)}")" -eq 1 ]; then
                                     echo "${GREEN}${speed}${RESET}"
                                 elif [ "$(awk "BEGIN{print ($speed_value > 50)}")" -eq 1 ]; then
@@ -924,8 +908,15 @@
                                 else
                                     echo "${RED}${speed} [SLOW]${RESET}"
                                 fi
+                            elif [ "$type_label" = "NVMe" ]; then
+                                if [ "$(awk "BEGIN{print ($speed_value > 500)}")" -eq 1 ]; then
+                                    echo "${GREEN}${speed}${RESET}"
+                                elif [ "$(awk "BEGIN{print ($speed_value > 200)}")" -eq 1 ]; then
+                                    echo "${YELLOW}${speed}${RESET}"
+                                else
+                                    echo "${RED}${speed} [SLOW]${RESET}"
+                                fi
                             else
-                                # SSD/NVMe expectations: >200 MB/s is good
                                 if [ "$(awk "BEGIN{print ($speed_value > 200)}")" -eq 1 ]; then
                                     echo "${GREEN}${speed}${RESET}"
                                 elif [ "$(awk "BEGIN{print ($speed_value > 100)}")" -eq 1 ]; then
@@ -971,7 +962,6 @@
         [ -n "$os_name" ] && print_info "Distribution" "$os_name"
         print_info "Kernel" "$kernel_info"
 
-        # Footer with warnings/notices (YABS-style)
         echo ""
 
         # Show critical issues first if any
@@ -1000,7 +990,6 @@
             echo -e "$END_NOTICES"
         fi
 
-        # Exit with appropriate code if critical issues found
         if [ ${#critical_issues_arr[@]} -gt 0 ]; then
             exit 2
         fi
