@@ -36,22 +36,22 @@ sudo ./yahi.sh
 
 ```bash
 # Quick overview (basic information)
-sudo ./yahi.sh
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | sudo bash
 
 # Extended details (all hardware information)
-sudo ./yahi.sh -e
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | sudo bash -s -- -e
 
 # With I/O performance tests
-sudo ./yahi.sh -t
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | sudo bash -s -- -t
 
 # Extended details + performance tests
-sudo ./yahi.sh -e -t
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | sudo bash -s -- -e -t
 
 # Save output to file
-sudo ./yahi.sh -e -t -o hardware-report.txt
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | sudo bash -s -- -e -t -o hardware-report.txt
 
 # Show help
-./yahi.sh -h
+curl -sL https://raw.githubusercontent.com/loayai/yet-another-hardware-info/master/yahi.sh | bash -s -- -h
 ```
 
 ### Running Without Sudo
